@@ -14,6 +14,7 @@
 
 ### Frontend (Kimi K3)
 - [ ] **K1 — Janela de exibição das telas = período da última coleta**
+      **em andamento (Kimi K3)** — toca `src/app.py` (area GLM), coordenado aqui.
       Hoje as telas recalculam `data corrente − 6m` (`app.py` em
       `_dados_comparacao` ~:399 e `api_repo_resumo` ~:445) e os números
       driftam entre coletas. Trocar para usar o `periodo_inicio`/`periodo_fim`
@@ -35,11 +36,11 @@
       `/comparar?ids=`, logout via POST e a suite atual (75 testes).
 
 ### Backend (GLM — coordenador)
-- [ ] **G1 — Pool com health-check + connect_timeout**
+- [x] **G1 — Pool com health-check + connect_timeout**
       `database.py`: ping (`SELECT 1`) no checkout do `getconn()`; se falhar,
       descartar a conexão e recriar o pool (postgres dessa máquina cai às
       vezes). `DB_CONFIG` com `connect_timeout=5` (config.py).
-- [ ] **G2 — Race 404 + origin/HEAD**
+- [x] **G2 — Race 404 + origin/HEAD**
       `app.py` (`api_repo_resumo` ~:444, `api_repo_github` ~:502):
       `if not repo: abort(404)` antes de usar `repo[...]`.
       `pydriller_collect.py` (~:42): `git remote set-head origin -a` antes do
@@ -47,7 +48,7 @@
       numa branch velha).
 - [ ] **G3 — Revisar/mergear commits das outras abas + CI**
       Validar suíte/pyflakes após cada commit dos colegas e conferir Actions.
-- [ ] **G4 — `contar_loc`: log em falha silenciosa**
+- [x] **G4 — `contar_loc`: log em falha silenciosa**
       `pydriller_collect.py:130-149`: hoje falha conta 0 linhas sem log —
       adicionar `log.warning` com o motivo.
 

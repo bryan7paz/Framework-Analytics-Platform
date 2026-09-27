@@ -13,6 +13,7 @@ from database import (
     insert_metrica_diaria,
     insert_metrica_sustentabilidade_commits,
 )
+from collect.github_metrics import _parse_owner_repo
 import status
 
 log = logging.getLogger("fap.pydriller")
@@ -20,14 +21,41 @@ log = logging.getLogger("fap.pydriller")
 CLONE_DIR = os.path.join(PROJ_ROOT, "data", "repos")
 
 
-def coletar_commits(url_repo: str):
+def _caminho_local(url_repo: str):
+    """Diretório do clone derivado da URL (owner__repo) — não colide entre
+    repositórios de donos diferentes com o mesmo nome."""
+    owner, nome = _parse_owner_repo(url_repo)
+    return os.path.join(CLONE_DIR, f"{owner}__{nome}")
+
+
+def _repo_local(url_repo: str):
+    """Garante o clone atualizado e retorna o caminho local.
+
+    Clona se não existe; senão fetch + reset (o PyDriller não puxa
+    atualizações de clones existentes — sem o refresh, a re-coleta usaria
+    commits velhos).
+    """
+    caminho = _caminho_local(url_repo)
+    if os.path.isdir(os.path.join(caminho, ".git")):
+        subprocess.run(["git", "-C", caminho, "fetch", "--all", "--prune",
+                        "--quiet"], check=True, capture_output=True, timeout=600)
+        subprocess.run(["git", "-C", caminho, "reset", "--hard", "origin/HEAD",
+                        "--quiet"], check=True, capture_output=True, timeout=600)
+        subprocess.run(["git", "-C", caminho, "clean", "-fd", "--quiet"],
+                       check=True, capture_output=True, timeout=600)
+    else:
+        os.makedirs(CLONE_DIR, exist_ok=True)
+        subprocess.run(["git", "clone", "--quiet", url_repo, caminho],
+                       check=True, capture_output=True, timeout=1800)
+    return caminho
+
+
+def coletar_commits(caminho_repo: str, since=None):
     """Retorna DataFrame com commits: dia, autor, lines_added, lines_deleted."""
+    if since is None:
+        since = pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)
     registros = []
-    for commit in Repository(
-        url_repo,
-        clone_repo_to=CLONE_DIR,
-        since=pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE),
-    ).traverse_commits():
+    for commit in Repository(caminho_repo, since=since).traverse_commits():
         added = sum(m.added_lines for m in commit.modified_files)
         deleted = sum(m.deleted_lines for m in commit.modified_files)
         registros.append(
@@ -130,20 +158,30 @@ def calcular_churn_relativo(df: pd.DataFrame, caminho_repo: str):
     return (churn / loc) if loc else None
 
 
-def executar(ids=None):
-    """Coleta PyDriller para todos os repositórios ou apenas os informados em `ids`."""
+def executar(ids=None, inicio=None, fim=None):
+    """Coleta PyDriller para todos os repositórios ou apenas os informados em `ids`.
+
+    inicio/fim (dates): janela do período compartilhada com o outro motor —
+    o orquestrador passa os MESMOS valores para os dois, garantindo linhas
+    casadas no banco. None = calcula a janela corrente.
+    Retorna (feitos, falhas): ids coletados e nomes dos repos que falharam
+    (um repo ruim não derruba mais o lote).
+    """
     repos = get_repositorios(ids)
     if repos.empty:
         log.warning("Nenhum repositório para coletar (ids=%s).", ids)
-        return
+        return [], []
 
     os.makedirs(CLONE_DIR, exist_ok=True)
 
-    inicio_periodo = pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)
-    hoje = pd.Timestamp.now().date()
+    if inicio is None:
+        inicio = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)).date()
+    if fim is None:
+        fim = pd.Timestamp.now().date()
+    since = pd.Timestamp(inicio)
 
     metricas_periodo = []
-    feitos = []
+    feitos, falhas = [], []
     total = len(repos)
     status.atualizar(
         estado="coletando",
@@ -154,36 +192,40 @@ def executar(ids=None):
         mensagem="Analisando commits com PyDriller.",
     )
     for i, repo in enumerate(repos.itertuples()):
-        log.info("Clonando/analisando: %s", repo.url)
-        status.atualizar(repo_atual=repo.nome, repos_concluidos=i)
-        df = coletar_commits(repo.url)
-        agregado = agregar_por_dia(df, repo.id_repositorio)
+        try:
+            log.info("Clonando/analisando: %s", repo.url)
+            status.atualizar(repo_atual=repo.nome, repos_concluidos=i)
+            caminho = _repo_local(repo.url)
+            df = coletar_commits(caminho, since=since)
+            agregado = agregar_por_dia(df, repo.id_repositorio)
 
-        log.info("%d commits extraídos para %s", len(df), repo.nome)
+            log.info("%d commits extraídos para %s", len(df), repo.nome)
 
-        if not agregado.empty:
-            insert_metrica_diaria(agregado)
+            if not agregado.empty:
+                insert_metrica_diaria(agregado)
 
-        por_mes = agregar_por_mes_autor(df)
-        insert_metrica_autor_mensal(por_mes, repo.id_repositorio,
-                                    inicio_periodo.date())
+            por_mes = agregar_por_mes_autor(df)
+            insert_metrica_autor_mensal(por_mes, repo.id_repositorio, inicio)
 
-        caminho_repo = os.path.join(CLONE_DIR, repo.nome)
-        metricas_periodo.append(
-            {
-                "id_repositorio": repo.id_repositorio,
-                "periodo_inicio": inicio_periodo.date(),
-                "periodo_fim": hoje,
-                "bus_factor": calcular_bus_factor(df),
-                "churn_relativo": calcular_churn_relativo(df, caminho_repo),
-            }
-        )
-        feitos.append(repo.id_repositorio)
-        status.atualizar(repos_concluidos=i + 1)
+            metricas_periodo.append(
+                {
+                    "id_repositorio": repo.id_repositorio,
+                    "periodo_inicio": inicio,
+                    "periodo_fim": fim,
+                    "bus_factor": calcular_bus_factor(df),
+                    "churn_relativo": calcular_churn_relativo(df, caminho),
+                }
+            )
+            feitos.append(repo.id_repositorio)
+        except Exception:
+            log.exception("Falha ao coletar commits de %s", repo.nome)
+            falhas.append(repo.nome)
+        finally:
+            status.atualizar(repos_concluidos=i + 1)
 
     insert_metrica_sustentabilidade_commits(pd.DataFrame(metricas_periodo))
-    log.info("Passo 2 concluído.")
-    return feitos
+    log.info("Passo 2 concluído (%d ok, %d falhas).", len(feitos), len(falhas))
+    return feitos, falhas
 
 
 if __name__ == "__main__":

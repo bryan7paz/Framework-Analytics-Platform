@@ -97,6 +97,12 @@ def primeiro_comentario_humano(owner, nome_repo, numero, token=None):
     Percorre as páginas de comentários até encontrar uma resposta não-bot;
     retorna None se não houver resposta humana.
     """
+    data, _ = _primeiro_comentario_detalhe(owner, nome_repo, numero, token=token)
+    return data
+
+
+def _primeiro_comentario_detalhe(owner, nome_repo, numero, token=None):
+    """(data, login) do primeiro comentário humano; (None, None) se não houver."""
     page = 1
     while True:
         data = _get(
@@ -105,30 +111,42 @@ def primeiro_comentario_humano(owner, nome_repo, numero, token=None):
             token=token,
         ).json()
         if not data:
-            return None
+            return None, None
         for c in data:
-            if not _eh_bot(c.get("user") or {}):
-                return c["created_at"]
+            user = c.get("user") or {}
+            if not _eh_bot(user):
+                return c["created_at"], user.get("login")
         if len(data) < 100:
-            return None
+            return None, None
         page += 1
 
 
 def calcular_ttfr_mediano(owner, nome_repo, issues, token=None):
+    """Mediana do TTFR + pessoas distintas ativas nas issues do período.
+
+    Retorna (mediana_dias, qtd_respondidas, pessoas_ativas) — pessoas_ativas
+    conta humanos que abriram ou comentaram issues do período (bots fora).
+    """
     totais_dias = []
+    pessoas = set()
     for iss in issues:
         if "pull_request" in iss:
             continue
-        primeiro = primeiro_comentario_humano(owner, nome_repo,
-                                              iss["number"], token=token)
-        if not primeiro:
+        criador = iss.get("user") or {}
+        if criador.get("login") and not _eh_bot(criador):
+            pessoas.add(criador["login"])
+        data, login_resposta = _primeiro_comentario_detalhe(
+            owner, nome_repo, iss["number"], token=token)
+        if not data:
             continue
+        if login_resposta:
+            pessoas.add(login_resposta)
         criada = pd.Timestamp(iss["created_at"])
-        diff = pd.Timestamp(primeiro) - criada
+        diff = pd.Timestamp(data) - criada
         totais_dias.append(diff.total_seconds() / 86400.0)
     if not totais_dias:
-        return None, 0
-    return float(pd.Series(totais_dias).median()), len(totais_dias)
+        return None, 0, len(pessoas)
+    return float(pd.Series(totais_dias).median()), len(totais_dias), len(pessoas)
 
 
 def buscar_releases(owner, nome_repo, desde, token=None):
@@ -189,19 +207,27 @@ def listar_releases(owner, nome_repo, token=None, limite=10):
     ]
 
 
-def executar(ids=None, token=None):
-    """Coleta métricas sociais de todos os repos ou apenas os de `ids`."""
+def executar(ids=None, token=None, inicio=None, fim=None):
+    """Coleta métricas sociais de todos os repos ou apenas os de `ids`.
+
+    inicio/fim (dates): janela do período — o orquestrador passa os MESMOS
+    valores para os dois motores, garantindo linhas casadas no banco.
+    None = calcula a janela corrente. Retorna (feitos, falhas): ids coletados
+    e nomes dos repositórios que falharam.
+    """
     repos = get_repositorios(ids)
     if repos.empty:
         log.warning("Nenhum repositório para coletar (ids=%s).", ids)
-        return []
+        return [], []
 
-    desde = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    hoje = pd.Timestamp.now().strftime("%Y-%m-%d")
-    inicio_periodo = pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)
+    if inicio is None:
+        inicio = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)).date()
+    if fim is None:
+        fim = pd.Timestamp.now().date()
+    desde = f"{inicio.isoformat()}T00:00:00Z"
 
     linhas = []
-    feitos = []
+    feitos, falhas = [], []
     total = len(repos)
     status.atualizar(
         estado="coletando",
@@ -214,42 +240,42 @@ def executar(ids=None, token=None):
     for i, repo in enumerate(repos.itertuples()):
         try:
             owner, nome_repo = _parse_owner_repo(repo.url)
-        except ValueError as e:
-            log.warning("Pulando repo %s: %s", repo.nome, e)
+            log.info("Processando %s/%s", owner, nome_repo)
+            status.atualizar(repo_atual=repo.nome, repos_concluidos=i)
+
+            issues = buscar_issues(owner, nome_repo, desde, token=token)
+            # apenas issues (sem PRs) criadas na janela — TTFR e contagens consistentes
+            issues = [iss for iss in issues
+                      if "pull_request" not in iss and iss["created_at"] >= desde]
+            log.info("%d issues do período para %s", len(issues), repo.nome)
+
+            ttfr_mediano, qtd, pessoas = calcular_ttfr_mediano(
+                owner, nome_repo, issues, token=token)
+            releases = buscar_releases(owner, nome_repo, desde, token=token)
+            cadencia = releases / MESES_ANALISE if MESES_ANALISE else None
+
+            linhas.append(
+                {
+                    "id_repositorio": repo.id_repositorio,
+                    "periodo_inicio": inicio,
+                    "periodo_fim": fim,
+                    "ttfr_mediano_dias": ttfr_mediano,
+                    "issues_abertas": sum(1 for iss in issues if iss["state"] == "open"),
+                    "issues_fechadas": sum(1 for iss in issues if iss["state"] == "closed"),
+                    "contribuidores_ativos": pessoas,
+                    "cadencia_releases": cadencia,
+                }
+            )
+            feitos.append(repo.id_repositorio)
+        except Exception:
+            log.exception("Falha ao coletar métricas de %s", repo.nome)
+            falhas.append(repo.nome)
+        finally:
             status.atualizar(repos_concluidos=i + 1)
-            continue
-        log.info("Processando %s/%s", owner, nome_repo)
-        status.atualizar(repo_atual=repo.nome, repos_concluidos=i)
-
-        issues = buscar_issues(owner, nome_repo, desde, token=token)
-        # apenas issues (sem PRs) criadas na janela — TTFR e contagens consistentes
-        issues = [iss for iss in issues
-                  if "pull_request" not in iss and iss["created_at"] >= desde]
-        log.info("%d issues do período para %s", len(issues), repo.nome)
-
-        ttfr_mediano, qtd = calcular_ttfr_mediano(owner, nome_repo, issues,
-                                                  token=token)
-        releases = buscar_releases(owner, nome_repo, desde, token=token)
-        cadencia = releases / MESES_ANALISE if MESES_ANALISE else None
-
-        linhas.append(
-            {
-                "id_repositorio": repo.id_repositorio,
-                "periodo_inicio": inicio_periodo.date(),
-                "periodo_fim": pd.Timestamp(hoje).date(),
-                "ttfr_medio_dias": ttfr_mediano,
-                "issues_abertas": sum(1 for iss in issues if iss["state"] == "open"),
-                "issues_fechadas": sum(1 for iss in issues if iss["state"] == "closed"),
-                "contribuidores_ativos": qtd,
-                "cadencia_releases": cadencia,
-            }
-        )
-        feitos.append(repo.id_repositorio)
-        status.atualizar(repos_concluidos=i + 1)
 
     insert_metrica_sustentabilidade(pd.DataFrame(linhas))
-    log.info("Passo 3 concluído.")
-    return feitos
+    log.info("Passo 3 concluído (%d ok, %d falhas).", len(feitos), len(falhas))
+    return feitos, falhas
 
 
 if __name__ == "__main__":

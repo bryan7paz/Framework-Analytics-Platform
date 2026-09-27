@@ -27,11 +27,17 @@ def test_health_publico(client):
 
 
 @pytest.mark.parametrize("rota", ["/", "/api/repos", "/api/coleta/status",
-                                  "/logout", "/repo/1"])
+                                  "/repo/1"])
 def test_rotas_protegidas_redirecionam_para_login(client, rota):
     resp = client.get(rota)
     assert resp.status_code == 302
     assert "/login" in resp.headers["Location"]
+
+
+def test_logout_somente_post(client):
+    assert client.get("/logout").status_code == 405
+    assert client.post("/logout").status_code == 302
+    assert "/login" in client.post("/logout").headers["Location"]
 
 
 def test_post_de_repos_tambem_protegido(client):

@@ -41,6 +41,9 @@ app = Flask(
     static_folder=os.path.join(os.path.dirname(__file__), "..", "static"),
 )
 app.secret_key = os.getenv("SESSION_SECRET") or secrets.token_hex(32)
+if not os.getenv("SESSION_SECRET"):
+    log.warning("SESSION_SECRET ausente — sessões não sobrevivem a restarts "
+                "e tokens OAuth de usuários não são armazenados.")
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
@@ -163,7 +166,7 @@ def login_dev():
     return redirect(url_for("meus_repos"))
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["POST"])
 @login_required
 def logout():
     logout_user()
@@ -294,7 +297,7 @@ def _linha_metricas(row):
     return {
         "periodo_inicio": str(row["periodo_inicio"]),
         "periodo_fim": str(row["periodo_fim"]),
-        "ttfr": _num(row["ttfr_medio_dias"]),
+        "ttfr": _num(row["ttfr_mediano_dias"]),
         "bus_factor": _inteiro(row["bus_factor"]),
         "churn_relativo": _num(row["churn_relativo"]),
         "issues_abertas": _inteiro(row["issues_abertas"]),
@@ -307,7 +310,7 @@ def _metricas_latest(id_repositorio):
     with connection() as conn:
         df = pd.read_sql(
             """
-            SELECT periodo_inicio, periodo_fim, ttfr_medio_dias, bus_factor,
+            SELECT periodo_inicio, periodo_fim, ttfr_mediano_dias, bus_factor,
                    churn_relativo, issues_abertas, issues_fechadas,
                    contribuidores_ativos, cadencia_releases
             FROM Metrica_Sustentabilidade
@@ -326,7 +329,7 @@ def _historico_score(id_repositorio):
     with connection() as conn:
         linhas = pd.read_sql(
             """
-            SELECT ms.periodo_inicio, ms.periodo_fim, ms.ttfr_medio_dias,
+            SELECT ms.periodo_inicio, ms.periodo_fim, ms.ttfr_mediano_dias,
                    ms.bus_factor, ms.churn_relativo,
                    COALESCE((
                        SELECT SUM(d.commits) FROM Metrica_Diaria d
@@ -344,7 +347,7 @@ def _historico_score(id_repositorio):
         s = analises.score_sustentabilidade({
             "commits": int(r.commits) if r.commits else None,
             "bus_factor": _inteiro(r.bus_factor),
-            "ttfr": _num(r.ttfr_medio_dias),
+            "ttfr": _num(r.ttfr_mediano_dias),
             "churn_relativo": _num(r.churn_relativo),
         })
         historico.append({
@@ -570,7 +573,7 @@ def _linhas_snapshot(id_usuario, ini, fim):
         df = pd.read_sql(
             """
             SELECT r.nome, r.url, COALESCE(ur.nome_exibicao, r.nome) AS rotulo,
-                   ms.bus_factor, ms.ttfr_medio_dias, ms.churn_relativo,
+                   ms.bus_factor, ms.ttfr_mediano_dias, ms.churn_relativo,
                    ms.issues_abertas, ms.issues_fechadas, ms.cadencia_releases,
                    COALESCE((
                        SELECT SUM(d.commits) FROM Metrica_Diaria d
@@ -592,7 +595,7 @@ def _linhas_snapshot(id_usuario, ini, fim):
         s = analises.score_sustentabilidade({
             "commits": int(r.commits) if r.commits else None,
             "bus_factor": _inteiro(r.bus_factor),
-            "ttfr": _num(r.ttfr_medio_dias),
+            "ttfr": _num(r.ttfr_mediano_dias),
             "churn_relativo": _num(r.churn_relativo),
         })
         linhas.append({
@@ -600,7 +603,7 @@ def _linhas_snapshot(id_usuario, ini, fim):
             "url": r.url,
             "commits": int(r.commits),
             "bus_factor": _inteiro(r.bus_factor),
-            "ttfr": _num(r.ttfr_medio_dias),
+            "ttfr": _num(r.ttfr_mediano_dias),
             "churn_relativo": _num(r.churn_relativo),
             "cadencia": _num(r.cadencia_releases),
             "issues_abertas": _inteiro(r.issues_abertas),
@@ -624,6 +627,14 @@ def snapshot():
                            selecionado=selecionado, linhas=linhas)
 
 
+def _celula_csv(valor):
+    """Neutraliza fórmulas no CSV exportado (=, +, -, @ viram texto seguro)."""
+    texto = "" if valor is None else str(valor)
+    if texto.startswith(("=", "+", "-", "@")):
+        return "'" + texto
+    return texto
+
+
 @app.route("/snapshot.csv")
 @login_required
 def snapshot_csv():
@@ -637,9 +648,11 @@ def snapshot_csv():
                 "churn_relativo", "cadencia_releases_mes", "issues_abertas",
                 "issues_fechadas", "score"])
     for l in _linhas_snapshot(current_user.id, ini, fim):
-        w.writerow([l["rotulo"], l["url"], l["commits"], l["bus_factor"],
-                    l["ttfr"], l["churn_relativo"], l["cadencia"],
-                    l["issues_abertas"], l["issues_fechadas"], l["score"]])
+        w.writerow([_celula_csv(l["rotulo"]), _celula_csv(l["url"]),
+                    _celula_csv(l["commits"]), _celula_csv(l["bus_factor"]),
+                    _celula_csv(l["ttfr"]), _celula_csv(l["churn_relativo"]),
+                    _celula_csv(l["cadencia"]), _celula_csv(l["issues_abertas"]),
+                    _celula_csv(l["issues_fechadas"]), _celula_csv(l["score"])])
     return Response(
         saida.getvalue(),
         mimetype="text/csv",
@@ -658,16 +671,31 @@ _coleta_lock = threading.Lock()
 def tarefa_mineracao(ids=None, token=None):
     """Executa os dois motores para `ids` (ou todos) e atualiza o status.
 
-    Uma coleta por vez: execuções simultâneas são ignoradas. Repos concluídos
-    nos dois motores são marcados mesmo se a execução falhar depois.
+    Uma coleta por vez: quando outra está em andamento, a nova execução fica
+    em espera numa thread e roda logo em seguida (em vez de ser descartada).
+    Repos concluídos nos dois motores são marcados mesmo se a execução falhar
+    depois.
     """
-    if not _coleta_lock.acquire(blocking=False):
-        log.warning("Coleta já em andamento — ignorando nova execução.")
+    if _coleta_lock.acquire(blocking=False):
+        try:
+            _tarefa_mineracao(ids, token)
+        finally:
+            _coleta_lock.release()
         return
-    try:
-        _tarefa_mineracao(ids, token)
-    finally:
-        _coleta_lock.release()
+    log.warning("Coleta em andamento — nova execução entrou em espera.")
+    threading.Thread(target=_coleta_em_espera, args=(ids, token),
+                     name="coleta-espera", daemon=True).start()
+
+
+def _coleta_em_espera(ids=None, token=None):
+    """Espera a coleta em andamento terminar (até 2h) e executa a sua."""
+    if _coleta_lock.acquire(timeout=7200):
+        try:
+            _tarefa_mineracao(ids, token)
+        finally:
+            _coleta_lock.release()
+    else:
+        log.warning("Desistiu de esperar a coleta em andamento (timeout 2h).")
 
 
 def _tarefa_mineracao(ids=None, token=None):
@@ -681,36 +709,47 @@ def _tarefa_mineracao(ids=None, token=None):
         total_repos=len(ids) if ids else 0,
         mensagem="Coleta em andamento.",
     )
+
+    # janela calculada UMA vez: os dois motores gravam o mesmo período
+    inicio = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)).date()
+    fim = pd.Timestamp.now().date()
+
     erros = []
     try:
-        feitos_churn = coletar_code_churn(ids) or []
+        feitos_churn, falhas_churn = coletar_code_churn(ids, inicio=inicio,
+                                                        fim=fim)
     except Exception:
         log.exception("Erro no Passo 2 (PyDriller)")
         erros.append("PyDriller")
-        feitos_churn = []
+        feitos_churn, falhas_churn = [], []
     try:
-        feitos_gh = coletar_metricas_sociais(ids, token=token) or []
+        feitos_gh, falhas_gh = coletar_metricas_sociais(ids, token=token,
+                                                        inicio=inicio, fim=fim)
     except Exception:
         log.exception("Erro no Passo 3 (GitHub API)")
         erros.append("GitHub API")
-        feitos_gh = []
+        feitos_gh, falhas_gh = [], []
+
+    # alvo = o que AMBOS os motores realmente coletaram (repos pulados por
+    # um motor ficam pendentes e são reprocessados na próxima coleta)
+    comuns = sorted(set(feitos_churn) & set(feitos_gh))
+    falhas = sorted(set(falhas_churn) | set(falhas_gh))
+    try:
+        marcar_coletado(comuns)
+    except Exception:
+        log.exception("Falha ao registrar conclusão da coleta")
+
     if erros:
-        comuns = sorted(set(feitos_churn) & set(feitos_gh))
-        if comuns:
-            try:
-                marcar_coletado(comuns)
-            except Exception:
-                log.exception("Falha ao registrar conclusão da coleta")
-        status.atualizar(estado="erro", repo_atual=None,
-                         mensagem="Falha em: " + ", ".join(erros))
+        mensagem = "Falha em: " + ", ".join(erros)
+    elif falhas:
+        mensagem = f"Coleta concluída — falhou em {len(falhas)} repositório(s)."
     else:
-        alvo = ids if ids else feitos_churn
-        try:
-            marcar_coletado(alvo)
-        except Exception:
-            log.exception("Falha ao registrar conclusão da coleta")
-        status.atualizar(estado="concluido", etapa=None, repo_atual=None,
-                         mensagem="Coleta concluída.")
+        mensagem = "Coleta concluída."
+    status.atualizar(estado="erro" if erros else "concluido",
+                     etapa=None, repo_atual=None, mensagem=mensagem)
+    if falhas:
+        log.warning("Repositórios com falha (ficam pendentes p/ retry): %s",
+                    falhas)
     log.info("Coleta finalizada (%s)", rotulo)
 
 

@@ -4,15 +4,19 @@ import hashlib
 import logging
 import math
 import os
+import threading
 from contextlib import contextmanager
 
 import pandas as pd
-import psycopg2
+from psycopg2.pool import ThreadedConnectionPool
 from cryptography.fernet import Fernet, InvalidToken
 
 from config import DB_CONFIG, PROJ_ROOT
 
 log = logging.getLogger("fap.db")
+
+_pool = None
+_pool_lock = threading.Lock()
 
 _fernet = None
 
@@ -68,17 +72,21 @@ def init_schema():
         "ALTER TABLE Repositorio DROP COLUMN IF EXISTS estrelas",
         # repos de donos diferentes podem ter o mesmo nome: identidade pela URL
         "ALTER TABLE Repositorio DROP CONSTRAINT IF EXISTS repositorio_nome_key",
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_repositorio_url ON Repositorio (url)",
+        # o valor é a mediana do TTFR — nome antigo divergia da implementação
+        """DO $ren$ BEGIN
+             IF EXISTS (SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'metrica_sustentabilidade'
+                          AND column_name = 'ttfr_medio_dias') THEN
+               ALTER TABLE Metrica_Sustentabilidade
+                 RENAME COLUMN ttfr_medio_dias TO ttfr_mediano_dias;
+             END IF;
+           END $ren$;""",
     ]
-    conn = get_connection()
-    try:
+    with connection() as conn:
         with conn.cursor() as cur:
             cur.execute(sql)
             for m in migracoes:
                 cur.execute(m)
-        conn.commit()
-    finally:
-        conn.close()
     log.info("Schema aplicado (%s).", schema_path)
 
 
@@ -119,7 +127,23 @@ def _clean(valor):
 
 
 def get_connection():
-    return psycopg2.connect(**DB_CONFIG)
+    """Conexão do pool (thread-safe, criado na primeira chamada)."""
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                _pool = ThreadedConnectionPool(1, 10, **DB_CONFIG)
+    return _pool.getconn()
+
+
+def _devolver_connection(conn):
+    try:
+        _pool.putconn(conn)
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 @contextmanager
@@ -132,7 +156,7 @@ def connection():
         conn.rollback()
         raise
     finally:
-        conn.close()
+        _devolver_connection(conn)
 
 
 # ---------------------------------------------------------------------------
@@ -368,12 +392,12 @@ def insert_metrica_sustentabilidade(df: pd.DataFrame):
     sql = """
         INSERT INTO Metrica_Sustentabilidade
             (id_repositorio, periodo_inicio, periodo_fim,
-             ttfr_medio_dias, issues_abertas, issues_fechadas,
+             ttfr_mediano_dias, issues_abertas, issues_fechadas,
              contribuidores_ativos, cadencia_releases)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (id_repositorio, periodo_inicio, periodo_fim)
         DO UPDATE SET
-            ttfr_medio_dias = EXCLUDED.ttfr_medio_dias,
+            ttfr_mediano_dias = EXCLUDED.ttfr_mediano_dias,
             issues_abertas = EXCLUDED.issues_abertas,
             issues_fechadas = EXCLUDED.issues_fechadas,
             contribuidores_ativos = EXCLUDED.contribuidores_ativos,
@@ -383,7 +407,7 @@ def insert_metrica_sustentabilidade(df: pd.DataFrame):
     rows = [
         (
             r.id_repositorio, r.periodo_inicio, r.periodo_fim,
-            _clean(r.ttfr_medio_dias), r.issues_abertas, r.issues_fechadas,
+            _clean(r.ttfr_mediano_dias), r.issues_abertas, r.issues_fechadas,
             r.contribuidores_ativos, _clean(r.cadencia_releases),
         )
         for r in df.itertuples()

@@ -68,10 +68,21 @@ def test_ttfr_mediana_ignora_pr_e_issue_sem_resposta():
                          "user": {"login": "maria", "type": "User"}}])
     responses.get(f"{API_BASE}/repos/{OWNER}/{REPO}/issues/3/comments", json=[])
 
-    mediana, qtd = calcular_ttfr_mediano(OWNER, REPO, issues)
+    mediana, qtd, pessoas = calcular_ttfr_mediano(OWNER, REPO, issues)
 
     assert qtd == 1
     assert abs(mediana - 1.5) < 1e-6
+    assert pessoas == 2  # criador da issue + quem respondeu
+
+
+@responses.activate
+def test_ttfr_sem_resposta_mesmo_conta_pessoas_ativas():
+    issues = [_issue(5, criada="2026-09-05T00:00:00Z")]
+    responses.get(f"{API_BASE}/repos/{OWNER}/{REPO}/issues/5/comments", json=[])
+    mediana, qtd, pessoas = calcular_ttfr_mediano(OWNER, REPO, issues)
+    assert mediana is None
+    assert qtd == 0
+    assert pessoas == 1  # quem abriu a issue entra nas pessoas ativas
 
 
 @responses.activate

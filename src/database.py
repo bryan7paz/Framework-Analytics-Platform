@@ -126,6 +126,17 @@ def _clean(valor):
     return valor
 
 
+def _health_check(conn):
+    """Ping simples para validar que a conexão ainda está viva."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        return True
+    except Exception:
+        return False
+
+
 def get_connection():
     """Conexão do pool (thread-safe, criado na primeira chamada)."""
     global _pool
@@ -133,6 +144,19 @@ def get_connection():
         with _pool_lock:
             if _pool is None:
                 _pool = ThreadedConnectionPool(1, 10, **DB_CONFIG)
+    for _ in range(3):
+        conn = _pool.getconn()
+        if _health_check(conn):
+            return conn
+        log.warning("Conexão do pool falhou health-check, descartando.")
+        try:
+            conn.close()
+        except Exception:
+            pass
+    # Se chegou aqui, todas as tentativas falharam — tenta recriar o pool
+    log.error("Todas as tentativas de conexão saudável falharam — recriando pool.")
+    with _pool_lock:
+        _pool = ThreadedConnectionPool(1, 10, **DB_CONFIG)
     return _pool.getconn()
 
 
@@ -322,6 +346,19 @@ def repositorio_por_id(id_repositorio):
                 return None
             cols = ["id_repositorio", "nome", "url"]
             return dict(zip(cols, row))
+
+
+def ultimo_periodo(id_repositorio):
+    """(periodo_inicio, periodo_fim) da última coleta do repo, ou None."""
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT periodo_inicio, periodo_fim FROM Metrica_Sustentabilidade "
+                "WHERE id_repositorio = %s "
+                "ORDER BY periodo_inicio DESC LIMIT 1",
+                (id_repositorio,),
+            )
+            return cur.fetchone()
 
 
 # ---------------------------------------------------------------------------

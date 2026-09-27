@@ -18,6 +18,7 @@ DB_CONFIG = {
     "dbname": os.getenv("DB_NAME", "fap"),
     "user": os.getenv("DB_USER", "postgres"),
     "password": os.getenv("DB_PASSWORD", ""),
+    "connect_timeout": int(os.getenv("DB_CONNECT_TIMEOUT", "10")),
 }
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")

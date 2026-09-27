@@ -20,8 +20,9 @@ import analises
 from config import GITHUB_TOKEN, MESES_ANALISE
 from database import (connection, init_schema, repositorios_pendentes,
                       repositorios_vinculados, repositorios_do_usuario,
-                      repositorio_por_id, usuario_dono, upsert_usuario,
-                      upsert_repositorio, link_usuario_repositorio,
+                      repositorio_por_id, ultimo_periodo, usuario_dono,
+                      upsert_usuario, upsert_repositorio,
+                      link_usuario_repositorio,
                       desvincular_e_limpar, buscar_usuario, marcar_coletado)
 import status
 from collect.pydriller_collect import executar as coletar_code_churn
@@ -358,6 +359,23 @@ def _historico_score(id_repositorio):
     return historico
 
 
+def _janela_exibicao(id_repositorio):
+    """(inicio_filtro, periodo) das telas do repo.
+
+    Com coleta concluída: filtra a partir do `periodo_inicio` gravado e
+    devolve (inicio, fim) do último período — os números não driftam entre
+    coletas. Sem coleta: cai para a janela corrente (hoje − MESES_ANALISE,
+    dia 1) e periodo=None.
+    """
+    periodo = ultimo_periodo(id_repositorio)
+    if periodo:
+        inicio, fim = periodo
+        return inicio, {"inicio": str(inicio), "fim": str(fim)}
+    inicio = (pd.Timestamp.now()
+              - pd.DateOffset(months=MESES_ANALISE)).replace(day=1).date()
+    return inicio, None
+
+
 def _serie_diaria(id_repositorio, inicio):
     """Série dia a dia (commits, linhas +/−) desde `inicio`."""
     with connection() as conn:
@@ -396,7 +414,7 @@ def _dados_comparacao(id_repositorio):
     repo = repositorio_por_id(id_repositorio)
     if not repo:
         return None
-    inicio = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)).date()
+    inicio, periodo = _janela_exibicao(id_repositorio)
     totais = _totais_periodo(id_repositorio, inicio)
     metricas = _metricas_latest(id_repositorio)
     score = analises.score_sustentabilidade({
@@ -413,6 +431,7 @@ def _dados_comparacao(id_repositorio):
         "repo": repo,
         "totais": totais,
         "metricas": metricas,
+        "periodo": periodo,
         "score": score,
         "curva": analises.curva_concentracao(id_repositorio, inicio),
         "serie": serie,
@@ -442,7 +461,9 @@ def api_repo_resumo(id_repositorio):
     if not usuario_dono(current_user.id, id_repositorio):
         abort(403)
     repo = repositorio_por_id(id_repositorio)
-    inicio = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)).date()
+    if not repo:
+        abort(404)
+    inicio = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)).replace(day=1).date()
     serie = _serie_diaria(id_repositorio, inicio)
     with connection() as conn:
         autores = pd.read_sql(
@@ -500,6 +521,8 @@ def api_repo_github(id_repositorio):
     if not usuario_dono(current_user.id, id_repositorio):
         abort(403)
     repo = repositorio_por_id(id_repositorio)
+    if not repo:
+        abort(404)
     try:
         owner, nome_repo = _parse_owner_repo(repo["url"])
     except ValueError:
@@ -711,7 +734,7 @@ def _tarefa_mineracao(ids=None, token=None):
     )
 
     # janela calculada UMA vez: os dois motores gravam o mesmo período
-    inicio = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)).date()
+    inicio = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)).replace(day=1).date()
     fim = pd.Timestamp.now().date()
 
     erros = []

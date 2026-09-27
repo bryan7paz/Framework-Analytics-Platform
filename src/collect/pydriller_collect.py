@@ -39,6 +39,10 @@ def _repo_local(url_repo: str):
     if os.path.isdir(os.path.join(caminho, ".git")):
         subprocess.run(["git", "-C", caminho, "fetch", "--all", "--prune",
                         "--quiet"], check=True, capture_output=True, timeout=600)
+        # Atualiza a referencia do HEAD remoto (necessario quando a branch
+        # default foi renomeada, ex.: master -> main, para o reset nao falhar).
+        subprocess.run(["git", "-C", caminho, "remote", "set-head", "origin", "-a"],
+                       check=True, capture_output=True, timeout=600)
         subprocess.run(["git", "-C", caminho, "reset", "--hard", "origin/HEAD",
                         "--quiet"], check=True, capture_output=True, timeout=600)
         subprocess.run(["git", "-C", caminho, "clean", "-fd", "--quiet"],
@@ -146,6 +150,7 @@ def contar_loc(caminho_repo: str):
                 continue
         return total
     except Exception:
+        log.warning("Falha ao contar LOC para %s: %s", caminho_repo, exc_info=True)
         return 0
 
 
@@ -175,7 +180,7 @@ def executar(ids=None, inicio=None, fim=None):
     os.makedirs(CLONE_DIR, exist_ok=True)
 
     if inicio is None:
-        inicio = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)).date()
+        inicio = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)).replace(day=1).date()
     if fim is None:
         fim = pd.Timestamp.now().date()
     since = pd.Timestamp(inicio)

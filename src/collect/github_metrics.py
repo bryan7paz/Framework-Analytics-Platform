@@ -221,7 +221,7 @@ def executar(ids=None, token=None, inicio=None, fim=None):
         return [], []
 
     if inicio is None:
-        inicio = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)).date()
+        inicio = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)).replace(day=1).date()
     if fim is None:
         fim = pd.Timestamp.now().date()
     desde = f"{inicio.isoformat()}T00:00:00Z"

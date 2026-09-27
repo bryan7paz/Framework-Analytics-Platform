@@ -5,7 +5,7 @@
 > Nunca reinicie a app/postgres sem avisar aqui primeiro.
 
 ## Estado do projeto
-- Últimos commits: `b08233f` (CI restaurado), `51f4997` (10 correções da auditoria)
+- Últimos commits: `59fa339` (fixar versoes CI), `06b1c19` (correcoes backend), `dec3c4b` (connect_timeout), `6839b9e` (docs AGENTS/TRABALHO)
 - Suíte: 75/75 testes, pyflakes limpo, CI verde, app no ar (health 200)
 - Postgres: sem serviço — pode cair; subir com pg_ctl (ver AGENTS.md)
 - Banco: coluna renomeada para `ttfr_mediano_dias`; migração idempotente no boot
@@ -23,11 +23,11 @@
       como está (já usa períodos fixos).
 
 ### Testes e docs (Nemotron 3.5)
-- [ ] **N1 — Testes da interseção e do CSV**
+- [x] **N1 — Testes da interseção e do CSV**
       `tests/`: (a) `_tarefa_mineracao` com os dois motores mockados —
       cobrir alvo = interseção (`comuns`), união de `falhas` e mensagens;
       (b) `_celula_csv` (app.py:630) — `=`, `+`, `-`, `@`, None, texto normal.
-- [ ] **N2 — Pin das deps de teste no CI**
+- [x] **N2 — Pin das deps de teste no CI**
       `.github/workflows/lint.yml`: `pip install -r requirements.txt
       pytest responses` → fixar versões (ex.: `pytest==8.4.2 responses==0.26.3`
       — conferir as versões instaladas no venv antes).
@@ -46,8 +46,9 @@
       `pydriller_collect.py` (~:42): `git remote set-head origin -a` antes do
       `reset --hard origin/HEAD` (default branch renomeada deixava o reset
       numa branch velha).
-- [ ] **G3 — Revisar/mergear commits das outras abas + CI**
-      Validar suíte/pyflakes após cada commit dos colegas e conferir Actions.
+- [x] **G3 — Revisar/mergear commits das outras abas + CI**
+      Validada suíte/pyflakes após commits; Actions no GitHub conferidas.
+      Merge das branches `agent/glm` e `agent/nemotron` incorporado ao master.
 - [x] **G4 — `contar_loc`: log em falha silenciosa**
       `pydriller_collect.py:130-149`: hoje falha conta 0 linhas sem log —
       adicionar `log.warning` com o motivo.

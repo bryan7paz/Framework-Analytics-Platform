@@ -6,9 +6,9 @@ e contagem de releases dentro da janela.
 import responses
 from responses import registries
 
-from collect.github_metrics import (API_BASE, _get, buscar_issues,
-                                    buscar_releases, calcular_ttfr_mediano,
-                                    primeiro_comentario_humano)
+from collect.github_metrics import (API_BASE, _get, _primeiro_comentario_detalhe,
+                                    buscar_issues, buscar_releases,
+                                    calcular_ttfr_mediano)
 
 OWNER, REPO = "faptc", "demo"
 
@@ -35,7 +35,7 @@ def test_buscar_issues_pagina_ate_acabar():
 
 
 @responses.activate
-def test_primeiro_comentario_humano_ignora_bots():
+def test_primeiro_comentario_detalhe_ignora_bots():
     responses.get(
         f"{API_BASE}/repos/{OWNER}/{REPO}/issues/7/comments",
         json=[
@@ -45,15 +45,16 @@ def test_primeiro_comentario_humano_ignora_bots():
              "user": {"login": "maria", "type": "User"}},
         ],
     )
-    data = primeiro_comentario_humano(OWNER, REPO, 7)
+    data, login = _primeiro_comentario_detalhe(OWNER, REPO, 7)
     assert data == "2026-09-03T09:30:00Z"
+    assert login == "maria"
 
 
 @responses.activate
-def test_primeiro_comentario_humano_sem_resposta_retorna_none():
+def test_primeiro_comentario_detalhe_sem_resposta_retorna_none():
     responses.get(f"{API_BASE}/repos/{OWNER}/{REPO}/issues/9/comments",
                   json=[])
-    assert primeiro_comentario_humano(OWNER, REPO, 9) is None
+    assert _primeiro_comentario_detalhe(OWNER, REPO, 9) == (None, None)
 
 
 @responses.activate

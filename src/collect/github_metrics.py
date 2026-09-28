@@ -91,16 +91,6 @@ def _eh_bot(user):
     )
 
 
-def primeiro_comentario_humano(owner, nome_repo, numero, token=None):
-    """Data do primeiro comentário feito por um humano (ignora bots).
-
-    Percorre as páginas de comentários até encontrar uma resposta não-bot;
-    retorna None se não houver resposta humana.
-    """
-    data, _ = _primeiro_comentario_detalhe(owner, nome_repo, numero, token=token)
-    return data
-
-
 def _primeiro_comentario_detalhe(owner, nome_repo, numero, token=None):
     """(data, login) do primeiro comentário humano; (None, None) se não houver."""
     page = 1

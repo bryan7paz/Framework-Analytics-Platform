@@ -173,7 +173,7 @@ python -m collect.github_metrics       # TTFR, issues, releases, contribuidores
 ## Métricas
 | Métrica | Definição |
 |---------|-----------|
-| Commits | total de commits na janela (6 meses) |
+| Commits | total de commits de autores humanos na janela (6 meses) |
 | Bus Factor | menor `k` tal que a soma das `k` maiores contribuições > 50% do total |
 | TTFR | mediana do tempo até a primeira resposta humana (exclui PRs e bots) |
 | Churn relativo | (linhas add + del no período) / LOC do repositório |
@@ -182,8 +182,9 @@ python -m collect.github_metrics       # TTFR, issues, releases, contribuidores
 | Curva de concentração | % dos commits do mês feitos pelo top-1 e top-3 de autores |
 | Score (0–100) | média das componentes normalizadas: atividade (teto 1000 commits), Bus Factor (teto 5), responsividade (piso 7 dias de TTFR) e estabilidade (piso de churn 1,5); métricas ausentes não entram na média |
 
-Nota metodológica: commits e Bus Factor hoje contam autores de commits sem
-filtrar contas bot (ex.: `dependabot[bot]`) — filtro pendente de decisão.
+Nota metodológica: commits e Bus Factor consideram somente autores humanos —
+contas automatizadas (bots, como `dependabot[bot]`) são filtradas na coleta,
+conforme a prática dos estudos de Truck Factor.
 
 ## Testes
 ```bash

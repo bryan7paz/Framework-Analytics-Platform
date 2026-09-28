@@ -5,10 +5,11 @@ import pandas as pd
 import pytest
 
 from collect.github_metrics import _eh_bot, _parse_owner_repo
-from collect.pydriller_collect import (agregar_por_dia,
+from collect.pydriller_collect import (_eh_bot_nome, agregar_por_dia,
                                        agregar_por_mes_autor,
                                        calcular_bus_factor,
-                                       calcular_churn_relativo, contar_loc)
+                                       calcular_churn_relativo, contar_loc,
+                                       coletar_commits)
 
 
 @pytest.mark.parametrize("url,esperado", [
@@ -60,6 +61,40 @@ def test_bus_factor_duas_pessoas_dominantes():
 def test_bus_factor_metade_exata():
     df = pd.DataFrame({"autor": ["a"] * 50 + ["b"] * 50})
     assert calcular_bus_factor(df) == 2
+
+
+def test_eh_bot_nome():
+    assert _eh_bot_nome("dependabot[bot]")
+    assert _eh_bot_nome("github-actions[bot]")
+    assert _eh_bot_nome("renovate[bot]")
+    assert _eh_bot_nome("ci-bot")
+    assert not _eh_bot_nome("Abbott")
+    assert not _eh_bot_nome("Ana Silva")
+    assert not _eh_bot_nome("")
+    assert not _eh_bot_nome(None)
+
+
+def test_coletar_commits_ignora_bots(tmp_path):
+    """End-to-end com repo local: commits de bots saem do df inteiro."""
+    def _commit(nome, email, msg):
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "-c", f"user.name={nome}",
+             "-c", f"user.email={email}", "commit", "--allow-empty",
+             "-q", "-m", msg],
+            check=True,
+        )
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    _commit("dependabot[bot]", "bot@b", "bump")
+    _commit("Ana Silva", "a@a", "fix")
+    _commit("ci-bot", "ci@c", "pipeline")
+
+    df = coletar_commits(str(tmp_path))
+
+    assert len(df) == 1
+    assert df.iloc[0]["autor"] == "Ana Silva"
+    # e o Bus Factor calculado sobre o df filtrado já é o humano
+    assert calcular_bus_factor(df) == 1
 
 
 def _repo_git_tmp(tmp_path):

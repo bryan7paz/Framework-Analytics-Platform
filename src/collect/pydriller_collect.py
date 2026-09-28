@@ -54,12 +54,36 @@ def _repo_local(url_repo: str):
     return caminho
 
 
+def _eh_bot_nome(nome):
+    """Identifica autores automatizados pelo nome (ex.: dependabot[bot]).
+
+    Cobre a convenção de Apps do GitHub ([bot]) e padrões comuns de bots.
+    Contas automatizadas não representam pessoas e distorceriam Bus Factor,
+    curva de concentração e contagens de commits.
+    """
+    nome = (nome or "").lower().strip()
+    return (
+        nome.endswith("[bot]")
+        or nome.endswith("-bot")
+        or "dependabot" in nome
+        or "github-actions" in nome
+        or "renovate" in nome
+    )
+
+
 def coletar_commits(caminho_repo: str, since=None):
-    """Retorna DataFrame com commits: dia, autor, lines_added, lines_deleted."""
+    """Retorna DataFrame com commits de autores humanos: dia, autor, linhas.
+
+    Commits de contas automatizadas (dependabot[bot] etc.) são excluídos.
+    """
     if since is None:
         since = pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)
     registros = []
+    bots = 0
     for commit in Repository(caminho_repo, since=since).traverse_commits():
+        if _eh_bot_nome(commit.author.name):
+            bots += 1
+            continue
         added = sum(m.added_lines for m in commit.modified_files)
         deleted = sum(m.deleted_lines for m in commit.modified_files)
         registros.append(
@@ -70,6 +94,8 @@ def coletar_commits(caminho_repo: str, since=None):
                 "lines_deleted": deleted,
             }
         )
+    if bots:
+        log.info("%d commits de bots filtrados em %s", bots, caminho_repo)
     return pd.DataFrame(registros)
 
 

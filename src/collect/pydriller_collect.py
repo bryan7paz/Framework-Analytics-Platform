@@ -150,7 +150,7 @@ def contar_loc(caminho_repo: str):
                 continue
         return total
     except Exception:
-        log.warning("Falha ao contar LOC para %s: %s", caminho_repo, exc_info=True)
+        log.exception("Falha ao contar LOC para %s", caminho_repo)
         return 0
 
 

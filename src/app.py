@@ -463,7 +463,7 @@ def api_repo_resumo(id_repositorio):
     repo = repositorio_por_id(id_repositorio)
     if not repo:
         abort(404)
-    inicio = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)).replace(day=1).date()
+    inicio, periodo = _janela_exibicao(id_repositorio)
     serie = _serie_diaria(id_repositorio, inicio)
     with connection() as conn:
         autores = pd.read_sql(
@@ -497,6 +497,7 @@ def api_repo_resumo(id_repositorio):
         "repo": repo,
         "coletando": coletando,
         "metricas": metricas,
+        "periodo": periodo,
         "commits_total": commits_total,
         "linhas_add": add_total,
         "linhas_del": del_total,

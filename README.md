@@ -1,6 +1,6 @@
 # FAP — Framework Analytics Platform
 
-[![lint](https://github.com/bryan7paz/fap/actions/workflows/lint.yml/badge.svg)](https://github.com/bryan7paz/fap/actions/workflows/lint.yml)
+[![lint](https://github.com/bryan7paz/Framework-Analytics-Platform/actions/workflows/lint.yml/badge.svg)](https://github.com/bryan7paz/Framework-Analytics-Platform/actions/workflows/lint.yml)
 
 Plataforma de análise de sustentabilidade de repositórios via **Mineração de
 Repositórios de Software (MSR)**: coleta code churn (PyDriller) e métricas sociais
@@ -22,37 +22,48 @@ mostra (Bus Factor, TTFR, churn relativo) mais **análises exclusive da FAP**
 3. Na página do repositório, duas abas:
    - **GitHub**: commits por dia, linhas +/-, autores, contribuidores e
      releases (API ao vivo);
-   - **Análises FAP**: score 0–100 com barras de componentes, curva de
-     concentração (top-1 e top-3 por mês) e métricas de sustentabilidade.
+   - **Análises FAP**: score 0–100 com barras de componentes e alertas
+     explicáveis, evolução do score, curva de concentração (top-1 e top-3
+     por mês) e métricas de sustentabilidade — com botão para baixar o
+     relatório `.docx`.
+4. No dashboard, marque 2+ repositórios para **comparar** (`/comparar`) ou
+   abra o **snapshot** (`/snapshot`): tabela consolidada por período coletado,
+   com números fixos e export CSV.
 
 ## Estrutura
 ```
 fap/
 ├── requirements.txt
-├── .env.example              # -> copie para .env e preencha
-├── sql/schema.sql            # idempotente: métricas, usuários e vínculos
-├── data/                     # clones git temporários + backups .sql
+├── Dockerfile                  # imagem (python:3.12-slim + git p/ PyDriller)
+├── docker-compose.yml          # app + postgres:16 com volumes
+├── .env.example                # -> copie para .env e preencha
+├── sql/schema.sql              # idempotente: métricas, usuários e vínculos
+├── data/                       # clones git temporários + backups .sql (gitignored)
 ├── src/
-│   ├── config.py             # carrega variáveis do .env
-│   ├── database.py           # conexão PostgreSQL + ETL (upsert) + init_schema()
-│   ├── status.py             # estado da coleta em background (thread-safe)
-│   ├── analises.py           # curva de concentração + score de sustentabilidade
-│   ├── app.py                # Flask: OAuth, CRUD de repos, APIs, auto-coleta
+│   ├── config.py               # carrega variáveis do .env
+│   ├── database.py             # pool de conexões + ETL (upsert) + init_schema()
+│   ├── status.py               # estado da coleta em background (thread-safe)
+│   ├── analises.py             # curva de concentração + score de sustentabilidade
+│   ├── relatorio.py            # relatório .docx (python-docx + matplotlib)
+│   ├── app.py                  # Flask: OAuth, CRUD de repos, APIs, snapshot, coleta
 │   └── collect/
 │       ├── pydriller_collect.py   # code churn + Bus Factor + churn relativo
 │       │                          # + agregação mensal por autor
 │       └── github_metrics.py      # TTFR (mediana, sem bots) + issues + releases
 │                                  # + contribuidores (com retry e token)
 ├── templates/
-│   ├── base.html             # topo (marca + usuário) e rodapé
-│   ├── login.html            # cartão de autenticação
-│   ├── meus_repos.html       # formulário + lista com status/polling
-│   └── repo_detalhe.html     # abas GitHub | Análises FAP
+│   ├── base.html               # topo (marca + usuário) e rodapé
+│   ├── login.html              # cartão de autenticação
+│   ├── meus_repos.html         # formulário + lista com status/polling
+│   ├── repo_detalhe.html       # abas GitHub | Análises FAP + relatório
+│   ├── comparar.html           # comparação lado a lado
+│   └── snapshot.html           # snapshot consolidado por período
 └── static/
-    ├── css/style.css         # token block (IBM Plex, tema claro)
+    ├── css/style.css           # token block (IBM Plex, tema claro)
     └── js/
-        ├── repos.js          # CRUD + polling do dashboard
-        └── repo_detalhe.js   # gráficos Plotly + score + abas
+        ├── repos.js            # CRUD + polling + seleção p/ comparar
+        ├── comparar.js         # gráficos da comparação
+        └── repo_detalhe.js     # gráficos Plotly + score + abas
 ```
 
 ## Requisitos
@@ -88,6 +99,8 @@ fap/
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | para login real | credenciais do OAuth App (sem elas o `/login` perde o botão) |
 | `MESES_ANALISE` | não | janela de análise em meses (default: 6) |
 | `MINERACAO_INTERVALO_DIAS` | não | período da coleta automática (default: 7) |
+| `DB_CONNECT_TIMEOUT` | não | timeout de conexão com o banco em segundos (default: 10) |
+| `FAP_HOST` / `PORT` | não | bind do servidor waitress (defaults: 127.0.0.1/5000) |
 | `FAP_SEM_AUTOCOLETA` | não | `1` = não coleta nada no boot (usado pelos testes) |
 
 ### Login com GitHub (OAuth App)
@@ -123,9 +136,15 @@ banco num volume `postgres-dados` (sobrevivem a `docker compose down`).
 Endpoints principais:
 - `POST /repos` / `DELETE /repos/<id>` — CRUD dos repositórios do usuário
 - `GET /api/repos` — lista JSON (polling do dashboard)
-- `GET /api/repo/<id>/resumo` — série, autores, métricas, curva e score
+- `GET /api/repo/<id>/resumo` — série, autores, métricas, curva, histórico do
+  score e score
 - `GET /api/repo/<id>/github` — contribuidores e releases (API ao vivo)
 - `GET /api/coleta/status` — estado da coleta
+- `GET /comparar?ids=1,2` — comparação lado a lado dos repositórios
+- `GET /snapshot` — tabela consolidada por período coletado (avaliável)
+- `GET /snapshot.csv?periodo=AAAAMMDD|AAAAMMDD` — export CSV do snapshot
+- `GET /repo/<id>/relatorio` — relatório `.docx` (score, métricas, gráficos)
+- `POST /logout` — encerra a sessão (somente POST)
 - `GET /api/health` — verificação de vida
 
 ## Coleta manual (opcional)
@@ -140,20 +159,26 @@ python -m collect.github_metrics       # TTFR, issues, releases, contribuidores
 ## Métricas
 | Métrica | Definição |
 |---------|-----------|
-| Commits | total de commits de autores humanos na janela (6 meses) |
+| Commits | total de commits na janela (6 meses) |
 | Bus Factor | menor `k` tal que a soma das `k` maiores contribuições > 50% do total |
 | TTFR | mediana do tempo até a primeira resposta humana (exclui PRs e bots) |
 | Churn relativo | (linhas add + del no período) / LOC do repositório |
 | Cadência de Releases | releases publicados por mês na janela (`R / M`) |
+| Contribuidores ativos | pessoas distintas que abriram ou comentaram issues no período (bots fora) |
 | Curva de concentração | % dos commits do mês feitos pelo top-1 e top-3 de autores |
 | Score (0–100) | média das componentes normalizadas: atividade (teto 1000 commits), Bus Factor (teto 5), responsividade (piso 7 dias de TTFR) e estabilidade (piso de churn 1,5); métricas ausentes não entram na média |
+
+Nota metodológica: commits e Bus Factor hoje contam autores de commits sem
+filtrar contas bot (ex.: `dependabot[bot]`) — filtro pendente de decisão.
 
 ## Testes
 ```bash
 pytest -q        # na raiz do projeto (precisa do PostgreSQL; CI roda os mesmos)
 ```
-Suíte: score/curva (matemática pura), utilitários dos coletores, helpers do
-banco (criptografia do token e upserts) e smoke das rotas com login simulado.
+Suíte (75 testes): score/curva (matemática pura), utilitários dos coletores,
+rede mockada com `responses` (paginação, PRs, bots, rate limit, releases),
+helpers do banco (criptografia do token e upserts), autocoleta, relatório
+`.docx` e snapshot, e smoke das rotas com login simulado.
 
 ## Licença
 Distribuído sob a licença [MIT](LICENSE).

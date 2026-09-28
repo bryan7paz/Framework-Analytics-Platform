@@ -75,6 +75,20 @@ fap/
 -   OAuth App do GitHub (opcional; habilita o login real)
 
 ## Instalação
+
+### Instalação rápida (recomendada)
+```bash
+python setup.py
+```
+Faz tudo sozinho: cria o venv, instala as dependências, gera o `.env` (com
+`SESSION_SECRET` pronto), sobe o PostgreSQL se estiver parado, cria o banco
+`fap`, aplica o schema e imprime o que ainda falta (token do GitHub, OAuth
+App). Depois, para rodar com duplo clique:
+```bash
+rodar.bat   # sobe o postgres se caiu e inicia o app
+```
+
+### Instalação manual
 1. Crie o ambiente virtual e instale as dependências:
    ```bash
    python -m venv fap_env

@@ -12,7 +12,7 @@
     </p>
 
     {% if erro %}
-        <p class="form-erro">Falha no login ({{ erro }}). Tente novamente.</p>
+        <p class="form-erro">{% if erro_msg %}{{ erro_msg }}{% else %}Falha no login ({{ erro }}). Tente novamente.{% endif %}</p>
     {% endif %}
 
     {% if oauth %}

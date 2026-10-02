@@ -83,12 +83,22 @@ def _token_usuario():
 # Autenticação (OAuth GitHub)
 # ---------------------------------------------------------------------------
 
+ERROS_LOGIN = {
+    "state_invalido": "sessão expirada — tente novamente.",
+    "acesso_negado": "acesso negado na tela do GitHub — autorize a FAP para entrar.",
+    "sem_codigo": "o GitHub não devolveu o código de autorização.",
+    "falha_troca_token": "falha ao trocar o código pelo token.",
+    "falha_perfil": "falha ao consultar seu perfil no GitHub.",
+}
+
+
 @app.route("/login")
 def login():
     if current_user.is_authenticated:
         return redirect(url_for("meus_repos"))
     erro = request.args.get("erro")
-    return render_template("login.html", oauth=OAUTH_CONFIGURADO, erro=erro)
+    return render_template("login.html", oauth=OAUTH_CONFIGURADO, erro=erro,
+                           erro_msg=ERROS_LOGIN.get(erro))
 
 
 @app.route("/login/github")
@@ -109,6 +119,11 @@ def callback():
         abort(404)
     if request.args.get("state") != session.pop("oauth_state", None):
         return redirect(url_for("login", erro="state_invalido"))
+    erro_github = request.args.get("error")
+    if erro_github:
+        erro = ("acesso_negado" if erro_github == "access_denied"
+                else f"github_{erro_github}")
+        return redirect(url_for("login", erro=erro))
     code = request.args.get("code")
     if not code:
         return redirect(url_for("login", erro="sem_codigo"))

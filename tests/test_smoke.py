@@ -58,6 +58,52 @@ def test_login_dev_disponivel_sem_oauth(client, monkeypatch):
     assert resp.status_code == 302
 
 
+def test_login_renderiza_botao_demo_sem_oauth(client, monkeypatch):
+    import app as app_mod
+    monkeypatch.setattr(app_mod, "OAUTH_CONFIGURADO", False)
+    resp = client.get("/login")
+    assert resp.status_code == 200
+    assert b"modo desenvolvimento" in resp.data
+    assert b"Entrar com GitHub" not in resp.data
+
+
+def test_login_renderiza_github_com_oauth(client, monkeypatch):
+    import app as app_mod
+    monkeypatch.setattr(app_mod, "OAUTH_CONFIGURADO", True)
+    resp = client.get("/login")
+    assert resp.status_code == 200
+    assert b"Entrar com GitHub" in resp.data
+    assert b"modo desenvolvimento" not in resp.data
+
+
+def test_login_mostra_mensagem_amigavel(client, monkeypatch):
+    import app as app_mod
+    monkeypatch.setattr(app_mod, "OAUTH_CONFIGURADO", True)
+    resp = client.get("/login?erro=acesso_negado")
+    assert resp.status_code == 200
+    assert b"acesso negado na tela do GitHub" in resp.data
+
+
+def test_callback_mapeia_acesso_negado(client, monkeypatch):
+    import app as app_mod
+    monkeypatch.setattr(app_mod, "OAUTH_CONFIGURADO", True)
+    with client.session_transaction() as s:
+        s["oauth_state"] = "estado-teste"
+    resp = client.get("/callback?state=estado-teste&error=access_denied")
+    assert resp.status_code == 302
+    assert "erro=acesso_negado" in resp.headers["Location"]
+
+
+def test_callback_mapeia_erro_generico(client, monkeypatch):
+    import app as app_mod
+    monkeypatch.setattr(app_mod, "OAUTH_CONFIGURADO", True)
+    with client.session_transaction() as s:
+        s["oauth_state"] = "estado-teste"
+    resp = client.get("/callback?state=estado-teste&error=application_suspended")
+    assert resp.status_code == 302
+    assert "erro=github_application_suspended" in resp.headers["Location"]
+
+
 def test_fluxo_logado_completo(client, logado):
     assert client.get("/").status_code == 200
 

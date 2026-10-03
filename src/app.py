@@ -23,7 +23,9 @@ from database import (connection, init_schema, repositorios_pendentes,
                       repositorio_por_id, ultimo_periodo, usuario_dono,
                       upsert_usuario, upsert_repositorio,
                       link_usuario_repositorio,
-                      desvincular_e_limpar, buscar_usuario, marcar_coletado)
+                      buscar_usuario, marcar_coletado,
+                      resumo_repos_usuario, renomear_exibicao,
+                      atualizar_url_repo, marcar_pendente)
 import status
 from collect.pydriller_collect import executar as coletar_code_churn
 from collect.github_metrics import (executar as coletar_metricas_sociais,
@@ -228,13 +230,27 @@ def api_coleta_status():
 @app.route("/api/repos")
 @login_required
 def api_repos():
-    """Lista JSON dos repositórios do usuário (usada pelo polling do dashboard)."""
+    """Lista JSON dos repositórios do usuário com visão macro (polling)."""
     repos = repositorios_do_usuario(current_user.id)
     coleta = status.snapshot()
     coletando = coleta["estado"] == "coletando"
+    resumo = resumo_repos_usuario([r["id_repositorio"] for r in repos])
     for r in repos:
         r["coletando"] = bool(coletando and coleta.get("repo_atual") == r["nome"])
         r["atualizado_em"] = str(r["atualizado_em"]) if r["atualizado_em"] else None
+        m = resumo.get(r["id_repositorio"], {})
+        r["commits"] = m.get("commits", 0)
+        r["autores"] = m.get("autores", 0)
+        if r["coletado"] and m:
+            s = analises.score_sustentabilidade({
+                "commits": m.get("commits"),
+                "bus_factor": m.get("bus_factor"),
+                "ttfr": m.get("ttfr"),
+                "churn_relativo": m.get("churn_relativo"),
+            })
+            r["score"] = s["score"]
+        else:
+            r["score"] = None
     return jsonify(repos)
 
 
@@ -282,13 +298,54 @@ def adicionar_repo():
     return jsonify(ok=True, id_repositorio=id_repositorio)
 
 
-@app.route("/repos/<int:id_repositorio>", methods=["DELETE"])
+@app.route("/repos/<int:id_repositorio>", methods=["PUT"])
 @login_required
-def remover_repo(id_repositorio):
+def editar_repo(id_repositorio):
+    """Edita o repositório do usuário: novo nome de exibição e/ou nova URL.
+
+    A nova URL é validada no GitHub; ao trocá-la, o repositório volta a ficar
+    pendente e a coleta roda em background (re-coleta dos dados).
+    """
     if not usuario_dono(current_user.id, id_repositorio):
         abort(403)
-    desvincular_e_limpar(current_user.id, id_repositorio)
-    return jsonify(ok=True)
+    data = request.get_json(silent=True) or {}
+    novo_nome = (data.get("nome") or "").strip()
+    nova_url = (data.get("url") or "").strip()
+    if not novo_nome and not nova_url:
+        return jsonify(erro="Informe um novo nome ou uma nova URL."), 400
+    token = _token_usuario()
+    re_coletando = False
+    if nova_url:
+        try:
+            owner, repo_name = _parse_owner_repo(nova_url)
+        except ValueError:
+            return jsonify(erro="URL inválida. Use https://github.com/owner/repo"), 400
+        headers = {"Accept": "application/vnd.github+json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        try:
+            resp = rq.get(f"https://api.github.com/repos/{owner}/{repo_name}",
+                          headers=headers, timeout=15)
+        except rq.RequestException:
+            return jsonify(erro="Falha ao consultar o GitHub. Tente novamente."), 502
+        if resp.status_code == 404:
+            return jsonify(erro="Repositório não encontrado no GitHub."), 404
+        if resp.status_code != 200:
+            return jsonify(erro=f"GITHUB respondeu HTTP {resp.status_code}."), 502
+        info = resp.json()
+        canonica = info.get("html_url", f"https://github.com/{owner}/{repo_name}") + ".git"
+        atualizar_url_repo(id_repositorio, canonica,
+                           info.get("name") or repo_name)
+        if not novo_nome:
+            novo_nome = info.get("name") or repo_name
+        marcar_pendente(id_repositorio)
+        re_coletando = True
+    renomear_exibicao(current_user.id, id_repositorio, novo_nome)
+    if re_coletando:
+        threading.Thread(target=tarefa_mineracao, args=([id_repositorio], token),
+                         name=f"coleta-repo-{id_repositorio}",
+                         daemon=True).start()
+    return jsonify(ok=True, re_coletando=re_coletando)
 
 
 # ---------------------------------------------------------------------------

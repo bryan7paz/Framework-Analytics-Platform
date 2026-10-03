@@ -43,6 +43,7 @@ def test_logout_somente_post(client):
 def test_post_de_repos_tambem_protegido(client):
     resp = client.post("/repos", json={"url": "https://github.com/a/b"})
     assert resp.status_code == 302
+    assert client.put("/repos/1", json={}).status_code == 302
 
 
 def test_login_dev_bloqueado_fora_de_localhost(client):
@@ -148,3 +149,53 @@ def test_adicionar_repo_com_url_invalida(client, logado):
 def test_adicionar_repo_sem_url(client, logado):
     resp = client.post("/repos", json={})
     assert resp.status_code == 400
+
+
+@pytest.fixture()
+def repo_teste(logado):
+    """Repo vinculado ao usuário logado (removido do BD ao fim do teste)."""
+    from database import upsert_repositorio, link_usuario_repositorio, connection
+    id_repo = upsert_repositorio("repo-fap-teste",
+                                 "https://github.com/fap-teste/repo-fap.git")
+    link_usuario_repositorio(logado, id_repo, "Repo Teste")
+    yield id_repo
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM Repositorio WHERE id_repositorio = %s",
+                        (id_repo,))
+
+
+def test_editar_repo_renomeia(client, logado, repo_teste):
+    resp = client.put(f"/repos/{repo_teste}", json={"nome": "Nome Novo"})
+    assert resp.status_code == 200
+    assert resp.get_json().get("ok") is True
+    repos = client.get("/api/repos").get_json()
+    r = next(x for x in repos if x["id_repositorio"] == repo_teste)
+    assert r["nome_exibicao"] == "Nome Novo"
+
+
+def test_editar_repo_url_invalida(client, logado, repo_teste):
+    resp = client.put(f"/repos/{repo_teste}",
+                      json={"url": "https://github.com/so-um-dono"})
+    assert resp.status_code == 400
+    assert "erro" in resp.get_json()
+
+
+def test_editar_repo_sem_dados(client, logado, repo_teste):
+    resp = client.put(f"/repos/{repo_teste}", json={})
+    assert resp.status_code == 400
+    assert "erro" in resp.get_json()
+
+
+def test_editar_repo_de_outro_usuario(client, logado):
+    assert client.put("/repos/9999999", json={"nome": "X"}).status_code == 403
+
+
+def test_delete_repo_foi_removido(client, logado, repo_teste):
+    assert client.delete(f"/repos/{repo_teste}").status_code == 405
+
+
+def test_api_repos_tem_visao_macro(client, logado, repo_teste):
+    repos = client.get("/api/repos").get_json()
+    r = next(x for x in repos if x["id_repositorio"] == repo_teste)
+    assert "commits" in r and "autores" in r and "score" in r

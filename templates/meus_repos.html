@@ -3,12 +3,13 @@
 
 {% block content %}
 <section class="hero">
-    <p class="eyebrow">Mineração de repositórios · janela de {{ meses }} meses</p>
-    <h1 class="hero-title">Meus <span class="accent">repositórios</span></h1>
+    <p class="eyebrow">Gestão de repositórios · janela de {{ meses }} meses</p>
+    <h1 class="hero-title">Acompanhe sua <span class="accent">equipe</span></h1>
     <p class="hero-sub">
-        Adicione o link de um repositório público do GitHub. A coleta roda em
-        segundo plano e, ao terminar, você vê as métricas de sustentabilidade
-        e as análises exclusive da FAP.
+        Adicione o repositório do seu time e acompanhe quem mais comita, quem
+        mais adiciona e apaga linhas e a saúde do projeto. A coleta roda em
+        segundo plano e, ao terminar, você vê as métricas e as análises
+        exclusivas da plataforma.
     </p>
 </section>
 
@@ -53,12 +54,15 @@
                     <th class="col-sel"></th>
                     <th>Repositório</th>
                     <th>URL</th>
+                    <th class="num">Commits</th>
+                    <th class="num">Autores</th>
+                    <th class="num">Score</th>
                     <th class="num">Status</th>
                     <th class="col-acoes">Ações</th>
                 </tr>
             </thead>
             <tbody id="repo-body">
-                <tr class="loading-row"><td colspan="5">Carregando…</td></tr>
+                <tr class="loading-row"><td colspan="8">Carregando…</td></tr>
             </tbody>
         </table>
     </div>

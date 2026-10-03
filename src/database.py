@@ -11,7 +11,7 @@ import pandas as pd
 from psycopg2.pool import ThreadedConnectionPool
 from cryptography.fernet import Fernet, InvalidToken
 
-from config import DB_CONFIG, PROJ_ROOT
+from config import DB_CONFIG, MESES_ANALISE, PROJ_ROOT
 
 log = logging.getLogger("fap.db")
 
@@ -117,6 +117,97 @@ def marcar_coletado(id_repositorios):
                 "WHERE id_repositorio IN %s",
                 (tuple(id_repositorios),),
             )
+
+
+def renomear_exibicao(id_usuario, id_repositorio, nome_exibicao):
+    """Atualiza o nome de exibição do repositório para o usuário."""
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE Usuario_Repositorio SET nome_exibicao = %s "
+                "WHERE id_usuario = %s AND id_repositorio = %s",
+                (nome_exibicao, id_usuario, id_repositorio),
+            )
+
+
+def atualizar_url_repo(id_repositorio, url, nome):
+    """Atualiza a URL canônica (e o nome) do repositório no banco."""
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE Repositorio SET url = %s, nome = %s "
+                "WHERE id_repositorio = %s",
+                (url, nome, id_repositorio),
+            )
+
+
+def marcar_pendente(id_repositorio):
+    """Marca o repositório como pendente (dispara re-coleta no próximo ciclo)."""
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE Repositorio SET atualizado_em = NULL "
+                "WHERE id_repositorio = %s",
+                (id_repositorio,),
+            )
+
+
+def resumo_repos_usuario(id_repositorios):
+    """Resumo por repositório (visão macro do gestor): commits na janela,
+    autores distintos e últimos indicadores sociais (para o score).
+
+    Retorna dict {id_repositorio: {"commits": int, "autores": int,
+    "ttfr": float|None, "bus_factor": int|None, "churn_relativo": float|None}}.
+    """
+    if not id_repositorios:
+        return {}
+    inicio = (pd.Timestamp.now() - pd.DateOffset(months=MESES_ANALISE)) \
+        .replace(day=1).date()
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id_repositorio, SUM(commits)
+                FROM Metrica_Diaria
+                WHERE id_repositorio IN %s AND dia >= %s
+                GROUP BY id_repositorio
+                """,
+                (tuple(id_repositorios), inicio),
+            )
+            commits = {row[0]: int(row[1] or 0) for row in cur.fetchall()}
+            cur.execute(
+                """
+                SELECT id_repositorio, COUNT(DISTINCT autor)
+                FROM Metrica_Autor_Mensal
+                WHERE id_repositorio IN %s AND mes >= %s
+                GROUP BY id_repositorio
+                """,
+                (tuple(id_repositorios), inicio.replace(day=1)),
+            )
+            autores = {row[0]: int(row[1]) for row in cur.fetchall()}
+            cur.execute(
+                """
+                SELECT DISTINCT ON (id_repositorio)
+                       id_repositorio, ttfr_mediano_dias, bus_factor,
+                       churn_relativo
+                FROM Metrica_Sustentabilidade
+                WHERE id_repositorio IN %s
+                ORDER BY id_repositorio, periodo_fim DESC
+                """,
+                (tuple(id_repositorios),),
+            )
+            sociais = {row[0]: row for row in cur.fetchall()}
+    resumo = {}
+    for rid in id_repositorios:
+        s = sociais.get(rid)
+        resumo[rid] = {
+            "commits": commits.get(rid, 0),
+            "autores": autores.get(rid, 0),
+            "ttfr": float(s[1]) if s and s[1] is not None else None,
+            "bus_factor": int(s[2]) if s and s[2] is not None else None,
+            "churn_relativo": float(s[3]) if s and s[3] is not None else None,
+        }
+    return resumo
 
 
 def _clean(valor):

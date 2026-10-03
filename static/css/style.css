@@ -339,6 +339,14 @@ body {
 .badge-green { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .badge-amber { border-color: var(--ocre, #b45309); color: #b45309; background: rgba(180, 83, 9, .08); }
 .badge-gray { color: var(--ink-3); }
+.badge-red { border-color: #b91c1c; color: #b91c1c; background: rgba(185, 28, 28, .08); }
+
+.form-edicao { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.form-edicao input[type="text"], .form-edicao input[type="url"] {
+    flex: 1 1 200px; min-width: 160px; padding: .45rem .6rem;
+    border: 1px solid var(--line, #ddd); border-radius: 6px;
+    font: inherit; background: var(--paper, #fff); color: inherit;
+}
 
 .col-acoes { width: 110px; }
 .url-col { font-family: var(--font-mono); font-size: var(--step--2); color: var(--ink-3); max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

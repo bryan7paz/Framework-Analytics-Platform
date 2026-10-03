@@ -1,16 +1,35 @@
-# FAP — Framework Analytics Platform
+# RepoAnalytics — Ferramenta de Acompanhamento de Projetos (FAP)
 
 [![lint](https://github.com/bryan7paz/Framework-Analytics-Platform/actions/workflows/lint.yml/badge.svg)](https://github.com/bryan7paz/Framework-Analytics-Platform/actions/workflows/lint.yml)
 
-Plataforma de análise de sustentabilidade de repositórios via **Mineração de
-Repositórios de Software (MSR)**: coleta code churn (PyDriller) e métricas sociais
-(GitHub API), armazena em PostgreSQL e apresenta um dashboard com Plotly.js.
+Plataforma de **gestão de repositórios de software** para gestores de equipe:
+você cadastra o repositório do time e acompanha quem mais comita, quem mais
+adiciona e apaga linhas, os cinco melhores contribuidores e a saúde do projeto —
+via **Mineração de Repositórios de Software (MSR)**: coleta code churn
+(PyDriller) e métricas sociais (GitHub API), armazena em PostgreSQL e apresenta
+um dashboard com Plotly.js.
 
-**Só os seus repositórios:** você entra com GitHub (OAuth), cadastra os
+**Para quem é:** gestores de equipe que precisam acompanhar como o time
+trabalha — não uma pessoa comum. Você entra com GitHub (OAuth), cadastra os
 repositórios que quer acompanhar e a plataforma coleta commits, releases e
 contribuidores em segundo plano, calculando métricas que o próprio GitHub não
-mostra (Bus Factor, TTFR, churn relativo) mais **análises exclusive da FAP**
+mostra (Bus Factor, TTFR, churn relativo) mais **análises exclusivas**
 (curva de concentração de conhecimento e score de sustentabilidade 0–100).
+
+## Passo a passo (do zero)
+
+1. **Baixar**: `git clone https://github.com/bryan7paz/Framework-Analytics-Platform.git`
+   (ou **Code → Download ZIP** no GitHub e extrair)
+2. **Instalar**: dentro da pasta, `python setup.py` — cria o venv, instala as
+   dependências, gera o `.env` (com `SESSION_SECRET` pronto), sobe o
+   PostgreSQL, cria o banco `fap` e aplica o schema
+3. **Preencher** (o setup avisa o que falta): `DB_PASSWORD` (a senha do
+   postgres escolhida na instalação) e `GITHUB_TOKEN`
+   (github.com/settings/tokens)
+4. **Abrir**: duplo clique em `rodar.bat` (sobe o postgres se caiu + inicia o
+   app) — ou `cd src` e `..\fap_env\Scripts\python.exe app.py`
+5. **Usar**: abra `http://127.0.0.1:5000`, entre (GitHub ou modo dev), cole a
+   URL de um repositório público e acompanhe a coleta em background
 
 ## Fluxo
 1. `GET /` sem sessão → redireciona para `/login` (OAuth GitHub; sem

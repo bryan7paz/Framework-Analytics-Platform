@@ -52,8 +52,19 @@ def _ler_env():
     return dados
 
 
+def passo_python():
+    print("\n1) Python")
+    v = sys.version_info[:2]
+    if (3, 9) <= v <= (3, 13):
+        _ok(f"Python {v[0]}.{v[1]} suportado")
+    else:
+        _pendente(f"Python {v[0]}.{v[1]} detectado — as dependências presas no "
+                  "requirements.txt não têm pacotes prontos para essa versão; "
+                  "use Python 3.12 ou 3.13 (https://www.python.org/downloads/)")
+
+
 def passo_venv():
-    print("\n1) Ambiente virtual")
+    print("\n2) Ambiente virtual")
     if VENV_PY.exists():
         _ok(f"venv já existe ({VENV.name})")
         return
@@ -65,7 +76,7 @@ def passo_venv():
 
 
 def passo_deps():
-    print("\n2) Dependências")
+    print("\n3) Dependências")
     if not VENV_PY.exists():
         return
     print("   instalando (pode demorar na 1ª vez)...")
@@ -78,7 +89,7 @@ def passo_deps():
 
 
 def passo_git():
-    print("\n3) Git (obrigatório para o PyDriller)")
+    print("\n4) Git (obrigatório para o PyDriller)")
     if shutil.which("git"):
         _ok("git encontrado")
     else:
@@ -86,7 +97,7 @@ def passo_git():
 
 
 def passo_env():
-    print("\n4) Arquivo .env")
+    print("\n5) Arquivo .env")
     if not ENV.exists():
         if ENV_EXEMPLO.exists():
             shutil.copy(ENV_EXEMPLO, ENV)
@@ -111,7 +122,7 @@ def passo_env():
 
 
 def passo_postgres():
-    print("\n5) PostgreSQL")
+    print("\n6) PostgreSQL")
     if _porta_aberta():
         _ok("PostgreSQL já está rodando (porta 5432)")
         return
@@ -128,7 +139,8 @@ def passo_postgres():
             break
     if not (ctl and pgdata):
         _pendente("PostgreSQL parado e sem instalação padrão encontrada — "
-                  "instale ou suba com: pg_ctl -D <caminho-do-cluster> start")
+                  "instale em https://www.postgresql.org/download/windows/ "
+                  "ou suba com: pg_ctl -D <caminho-do-cluster> start")
         return
     print(f"   subindo ({pgdata})...")
     _rodar([str(ctl), "-D", str(pgdata), "-l", str(RAIZ / "pg_startup.log"),
@@ -140,10 +152,9 @@ def passo_postgres():
 
 
 def passo_banco():
-    print("\n6) Banco de dados 'fap'")
+    print("\n7) Banco de dados 'fap'")
     if not _porta_aberta() or not VENV_PY.exists():
         return
-    env = _ler_env()
     script = (
         "import os, psycopg2\n"
         "c = psycopg2.connect(host=os.getenv('DB_HOST','localhost'),"
@@ -170,7 +181,7 @@ def passo_banco():
 
 
 def passo_schema():
-    print("\n7) Schema")
+    print("\n8) Schema")
     if not _porta_aberta() or not VENV_PY.exists():
         return
     r = _rodar([str(VENV_PY), "-c",
@@ -184,7 +195,7 @@ def passo_schema():
 
 
 def passo_oauth():
-    print("\n8) Login com GitHub (opcional)")
+    print("\n9) Login com GitHub (opcional)")
     env = _ler_env()
     if env.get("GITHUB_CLIENT_ID") and env.get("GITHUB_CLIENT_SECRET"):
         _ok("OAuth App configurado — botão 'Entrar com GitHub' ativo")
@@ -197,6 +208,7 @@ def passo_oauth():
 
 def main():
     print("=== Instalação da FAP ===")
+    passo_python()
     passo_venv()
     passo_deps()
     passo_git()
@@ -212,7 +224,8 @@ def main():
             print("  -", p)
     else:
         print("Tudo pronto! Para rodar:")
-        print("  Windows: rode rodar.bat (ou cd src && python app.py)")
+        print("  Windows: rode rodar.bat (ou cd src && "
+              r"..\fap_env\Scripts\python.exe app.py)")
     print()
 
 

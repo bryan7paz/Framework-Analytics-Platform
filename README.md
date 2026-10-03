@@ -67,7 +67,8 @@ fap/
 ```
 
 ## Requisitos
--   Python 3.12 (com "Add to PATH")
+-   Python 3.12 ou 3.13 (com "Add to PATH" — versões mais novas podem falhar
+    ao compilar dependências presas no `requirements.txt`)
 -   PostgreSQL (porta 5432)
 -   Token do GitHub (essencial na prática: sem ele são só 60 req/hora da API e
     o cálculo do TTFR faz 1 requisição por issue — a coleta não fecha a tempo;
@@ -132,8 +133,10 @@ só enquanto o OAuth não está configurado.
 ## Executar
 ```bash
 cd src
-python app.py
+..\fap_env\Scripts\python.exe app.py
 ```
+(o venv fica na raiz do projeto — ou ative-o com `..\fap_env\Scripts\activate`
+e use `python app.py`)
 Abra `http://localhost:5000`. Os repositórios vinculados que ainda não foram
 coletados (`Repositorio.atualizado_em IS NULL`) são processados em background no
 boot, e uma rotina APScheduler (padrão: 7 dias) mantém tudo atualizado.
@@ -162,7 +165,7 @@ Endpoints principais:
 - `GET /api/health` — verificação de vida
 
 ## Coleta manual (opcional)
-Com o banco criado, basta reiniciar `python app.py` que ele detecta os
+Com o banco criado, basta reiniciar o app que ele detecta os
 repositórios pendentes e coleta; para rodar os motores fora do app:
 ```bash
 cd src
